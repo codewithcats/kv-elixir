@@ -5,7 +5,7 @@ defmodule KV.Registry do
   Start new registry.
   """
   def start_link opts do
-    GenServer.start_link __MODULE__, :ok, opts
+    GenServer.start_link __MODULE__, {%{}, %{}}, opts
   end
 
   @doc """
@@ -23,22 +23,38 @@ defmodule KV.Registry do
   end
 
   @impl true
-  def init :ok do
-    {:ok, %{}}
+  def init {names, refs} do
+    {:ok, {names, refs}}
   end
 
   @impl true
-  def handle_call {:lookup, name}, _from, names do
+  def handle_call {:lookup, name}, _from, {names, _} do
     {:reply, (Map.fetch names, name), names}
   end
 
   @impl true
-  def handle_cast {:create, name}, names do
+  def handle_cast {:create, name}, state do
+    {names, refs} = state
     if Map.has_key? names, name do
-      {:noreply, names}
+      {:noreply, {names, refs}}
     else
       {:ok, bucket} = KV.Bucket.start_link []
-      {:noreply, (Map.put names, name, bucket)}
+      ref = Process.monitor bucket
+      refs = Map.put refs, ref, name
+      names = Map.put names, name, bucket
+      {:noreply, {names, refs}}
     end
+  end
+
+  @impl true
+  def handle_info {:DOWN, ref, :process, _pid, _reason}, {names, refs} do
+    {name, refs} = Map.pop refs, ref
+    names = Map.delete names, name
+    {:noreply, {names, refs}}
+  end
+
+  @impl true
+  def handle_info _msg, state do
+    {:noreply, state}
   end
 end
